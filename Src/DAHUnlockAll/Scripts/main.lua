@@ -1,0 +1,57 @@
+-- =======================================================================
+-- Destroy All Humans! (2020): Unlock All Weapons and Abilities v1.0.1
+-- Target: DH-Win64-Shipping (Unreal Engine 4.22, Steam build 6184983)
+-- Framework: UE4SS v3.0.1 experimental (commit e3ba1016, 2026-09-29; tested in game. Build f08dfdf runs the mods too but crashes when the game closes)
+-- UE4SS-settings.ini: nothing required.
+--
+-- What it does: Ctrl+F1 unlocks every weapon, Ctrl+F2 every psychic ability, with the developers' own
+-- UBFGCheatManager:UnlockAllWeapons / UnlockAlAbilities (permanent: the game writes it to your save at its next
+-- save). Nothing happens until you press a key. The number of unlocked items is read back from your PlayerState
+-- and logged. Game thread only (engine timer on your controller; otc_dah.lua header).
+-- =======================================================================
+-- Self-checks (registered by otc_dah.lua with the default keys; listed here for our test tooling sheet):
+-- SC:expect("unlock_weapons", "press Ctrl+F1 once")
+-- SC:expect("unlock_abilities", "press Ctrl+F2 once")
+local ModName = "DAHUnlockAll"
+local ModVersion = "1.0.1"
+-- Lua garbage collector in generational mode (1.0.1, 2026-10-01). The game-thread tick (engine timer every 0.05 s -> Actor:ForceNetUpdate) runs 20 times a second and every call leaves
+-- short-lived objects in this mod's own Lua state; generational GC frees them in small minor collections instead
+-- of periodic full incremental cycles (High on Life smoke A/B: frames over 50 ms in minute 2 went 12 -> 1).
+-- Lua 5.4 only (UE4SS ships 5.4); on any other version this line does nothing. Touches no game object.
+pcall(collectgarbage, "generational")
+local CORE_MIN = 1.0
+
+local function load_core()
+    local ok, m = pcall(require, "otc_dah")
+    if not (ok and type(m) == "table") then
+        local src = debug and debug.getinfo and debug.getinfo(1, "S").source or ""
+        local dir = (src:gsub("^@", "")):match("^(.*[/\\])") or ""
+        ok, m = pcall(dofile, dir .. "otc_dah.lua")
+    end
+    if ok and type(m) == "table" and type(m.run) == "function" and (tonumber(m.VERSION) or 0) >= CORE_MIN then return m end
+    return nil
+end
+local Core = load_core()
+if not Core then
+    print(string.format("[%s] otc_dah.lua missing or older than %.1f; mod disabled (copy every file from the download).\n", ModName, CORE_MIN))
+    return
+end
+
+local okc, config = pcall(require, "config")
+if not okc or type(config) ~= "table" then
+    local why = tostring(config):match("^[^\n]*") or ""
+    if okc or not why:find("not found", 1, true) then
+        print(string.format("[%s] Warning: Scripts\\config.lua could not be loaded (%s); using the default settings.\n", ModName, why))
+    end
+    config = {}
+end
+local function key(name, default) local v = config[name]; if type(v) ~= "string" then return default end return v end
+local wk, ak = key("weapons_key", "CTRL+F1"), key("abilities_key", "CTRL+F2")
+
+print(string.format("[%s] Initializing v%s (weapons: %s, abilities: %s). Nothing changes until you press a key.\n",
+    ModName, ModVersion, wk ~= "" and wk or "no key", ak ~= "" and ak or "no key"))
+
+Core.run({
+    mod = ModName, version = ModVersion,
+    actions = { Core.action_unlock("weapons", wk), Core.action_unlock("abilities", ak) },
+})
